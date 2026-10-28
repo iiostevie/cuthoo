@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cuthoo",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/discord/*", "/health"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "CUTHOO", "class_name": "CuthooCoordinator" }]
+  },
+  "exports": {
+    "CuthooCoordinator": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+  }
+}

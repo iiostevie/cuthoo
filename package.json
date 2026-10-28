@@ -1,0 +1,22 @@
+{
+  "name": "cuthoo",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare-native signing-event sales monitor",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "commands:register": "node scripts/register-commands.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.124.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

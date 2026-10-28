@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#191d27">
+  <title>Cuthoo — 簽售動態監控</title>
+  <meta name="description" content="Cuthoo 將商品數量變化整理成清楚、可追蹤的監控事件。">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Cuthoo 首頁"><span class="brand-mark">C</span><span>Cuthoo</span></a>
+    <div class="connection"><span id="healthDot" class="dot"></span><span id="healthText">等待連線</span></div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">SIGNING EVENT INTELLIGENCE</p>
+        <h1>每一次變化，<br><em>都有跡可循。</em></h1>
+        <p class="lede">集中管理商品狀態、數量變更與平均變化量。Discord 是通知出口，Portal 才是你的控制中心。</p>
+      </div>
+      <button id="addButton" class="primary-button">＋ 新增授權商品</button>
+    </section>
+
+    <section class="summary" aria-label="監控摘要">
+      <article><span>監控中</span><strong id="activeCount">—</strong></article>
+      <article><span>推定本數</span><strong id="unitCount">—</strong></article>
+      <article><span>數量變更</span><strong id="changeCount">—</strong></article>
+      <article><span>已終止</span><strong id="terminatedCount">—</strong></article>
+    </section>
+
+    <section class="workspace">
+      <div class="section-heading">
+        <div><p class="eyebrow">LIVE PRODUCTS</p><h2>商品監控</h2></div>
+        <div class="filters" role="group" aria-label="商品狀態篩選">
+          <button class="filter active" data-filter="ALL">全部</button>
+          <button class="filter" data-filter="ACTIVE">監控中</button>
+          <button class="filter" data-filter="PAUSED">已暫停</button>
+          <button class="filter" data-filter="TERMINATED">已終止</button>
+        </div>
+      </div>
+      <div id="productGrid" class="product-grid"><div class="empty">輸入管理金鑰後載入商品。</div></div>
+    </section>
+  </main>
+
+  <dialog id="tokenDialog">
+    <form method="dialog" id="tokenForm">
+      <div class="dialog-heading"><p class="eyebrow">SECURE ACCESS</p><h2>連接 Cuthoo</h2></div>
+      <p>管理金鑰只保存在這個瀏覽器分頁，關閉分頁後即清除。</p>
+      <label>管理金鑰<input id="tokenInput" type="password" autocomplete="current-password" required></label>
+      <div class="dialog-actions"><button value="cancel" class="text-button">取消</button><button value="default" class="primary-button">連接</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="addDialog">
+    <form method="dialog" id="addForm">
+      <div class="dialog-heading"><p class="eyebrow">NEW MONITOR</p><h2>新增商品</h2></div>
+      <label>商品網址<input id="urlInput" type="url" placeholder="https://www.kmonstar.com.tw/products/..." required></label>
+      <label>顯示名稱（選填）<input id="nameInput" type="text" maxlength="100" placeholder="例如：CHOI YOOJUNG 簽售"></label>
+      <label class="consent"><input id="authorizedInput" type="checkbox" required><span>我確認已取得網站允許，可自動監控此商品頁。</span></label>
+      <p class="notice">Cuthoo 不會換 IP、繞過限制或忽略 403／429 回應。</p>
+      <div class="dialog-actions"><button value="cancel" class="text-button">取消</button><button id="saveProduct" value="default" class="primary-button">建立監控</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="logDialog" class="log-dialog">
+    <form method="dialog">
+      <div class="dialog-heading"><p class="eyebrow">POLL HISTORY</p><h2>完整監控 Log</h2></div>
+      <p>商品 <code id="logProductId"></code>，時間為台灣時間，最新 200 筆。</p>
+      <div class="log-scroll"><table><thead><tr><th>時間</th><th>結果</th><th>前次</th><th>本次</th><th>差值</th><th>售罄</th><th>原因</th><th>下次</th></tr></thead><tbody id="logRows"></tbody></table></div>
+      <div class="dialog-actions"><button value="default" class="primary-button">關閉</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
