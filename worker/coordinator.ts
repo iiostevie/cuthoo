@@ -177,11 +177,18 @@ export class CuthooCoordinator extends DurableObject<Env> {
     const now = Date.now();
     if (action === "pause") this.sql.exec("UPDATE products SET status='PAUSED',reason='MANUAL_PAUSE',auto_resume_at=NULL,final_window_until=NULL,updated_at=? WHERE id=?", now, id);
     else if (action === "resume") this.sql.exec("UPDATE products SET status='ACTIVE',reason=NULL,terminal_count=0,error_count=0,next_poll_at=?,auto_resume_at=NULL,final_window_until=NULL,terminated_at=NULL,updated_at=? WHERE id=?", now, now, id);
-    else if (action === "final_two_hours") this.sql.exec("UPDATE products SET status='ACTIVE',reason=NULL,terminal_count=0,error_count=0,next_poll_at=?,auto_resume_at=NULL,final_window_until=?,terminated_at=NULL,updated_at=? WHERE id=?", now, now + 7_200_000, now, id);
+    else if (action === "final_two_hours") {
+      if (product.final_window_until) {
+        const nextPollAt = now + nextPollDelaySeconds(now) * 1000;
+        this.sql.exec("UPDATE products SET status='ACTIVE',reason=NULL,next_poll_at=?,final_window_until=NULL,updated_at=? WHERE id=?", nextPollAt, now, id);
+      } else {
+        this.sql.exec("UPDATE products SET status='ACTIVE',reason=NULL,terminal_count=0,error_count=0,next_poll_at=?,auto_resume_at=NULL,final_window_until=?,terminated_at=NULL,updated_at=? WHERE id=?", now, now + 7_200_000, now, id);
+      }
+    }
     else if (action === "terminate") this.terminate(id, "MANUAL_UNSUBSCRIBE");
     else throw new Error("不支援的操作");
     await this.scheduleNextAlarm();
-    return { id, action, ok: true };
+    return { id, action, enabled: action === "final_two_hours" ? !product.final_window_until : undefined, ok: true };
   }
 
   private async pollProduct(product: ProductRow): Promise<void> {
