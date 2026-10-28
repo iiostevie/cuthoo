@@ -9,7 +9,7 @@ type ProductRow = {
   status: string; reason: StopReason | null;
   base_poll_seconds: number; stable_count: number; terminal_count: number; error_count: number;
   next_poll_at: number; auto_resume_at: number | null; last_success_at: number | null;
-  updated_at: number; terminated_at: number | null;
+  final_window_until: number | null; updated_at: number; terminated_at: number | null;
 };
 
 export class CuthooCoordinator extends DurableObject<Env> {
@@ -48,6 +48,14 @@ export class CuthooCoordinator extends DurableObject<Env> {
       "UPDATE products SET status='ACTIVE', reason=NULL, auto_resume_at=NULL WHERE status='PAUSED' AND auto_resume_at IS NOT NULL AND auto_resume_at<=?",
       now,
     );
+    const expiredFinalWindows = [...this.sql.exec<{ id: string; title: string }>(
+      "SELECT id,title FROM products WHERE status='ACTIVE' AND final_window_until IS NOT NULL AND final_window_until<=?",
+      now,
+    )];
+    for (const product of expiredFinalWindows) {
+      this.terminate(product.id, "FINAL_WINDOW_ENDED");
+      await this.queueSystemNotice(product.id, `⏱️ **${product.title}** 最後兩小時監控已結束，已自動停止。`);
+    }
     const due = [...this.sql.exec<ProductRow>(
       "SELECT * FROM products WHERE status='ACTIVE' AND next_poll_at<=? ORDER BY next_poll_at LIMIT 25",
       now,
@@ -68,7 +76,7 @@ export class CuthooCoordinator extends DurableObject<Env> {
       status TEXT NOT NULL DEFAULT 'ACTIVE', reason TEXT, base_poll_seconds INTEGER NOT NULL DEFAULT 60,
       stable_count INTEGER NOT NULL DEFAULT 0, terminal_count INTEGER NOT NULL DEFAULT 0,
       error_count INTEGER NOT NULL DEFAULT 0, next_poll_at INTEGER NOT NULL, auto_resume_at INTEGER,
-      last_success_at INTEGER, updated_at INTEGER NOT NULL, terminated_at INTEGER
+      last_success_at INTEGER, final_window_until INTEGER, updated_at INTEGER NOT NULL, terminated_at INTEGER
     )`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS subscriptions (
       id TEXT PRIMARY KEY, product_id TEXT NOT NULL, guild_id TEXT, channel_id TEXT NOT NULL,
@@ -89,6 +97,9 @@ export class CuthooCoordinator extends DurableObject<Env> {
     if (!productColumns.has("changed_units_total")) {
       this.sql.exec("ALTER TABLE products ADD COLUMN changed_units_total INTEGER NOT NULL DEFAULT 0");
       this.sql.exec("UPDATE products SET changed_units_total=COALESCE((SELECT SUM(ABS(e.inventory_delta)) FROM order_events e WHERE e.product_id=products.id),0)");
+    }
+    if (!productColumns.has("final_window_until")) {
+      this.sql.exec("ALTER TABLE products ADD COLUMN final_window_until INTEGER");
     }
     this.sql.exec(`CREATE TABLE IF NOT EXISTS notification_outbox (
       id TEXT PRIMARY KEY, event_id TEXT NOT NULL, channel_id TEXT NOT NULL,
@@ -164,8 +175,9 @@ export class CuthooCoordinator extends DurableObject<Env> {
     const product = [...this.sql.exec<ProductRow>("SELECT * FROM products WHERE id=?", id)][0];
     if (!product) throw new Error("找不到商品");
     const now = Date.now();
-    if (action === "pause") this.sql.exec("UPDATE products SET status='PAUSED',reason='MANUAL_PAUSE',auto_resume_at=NULL,updated_at=? WHERE id=?", now, id);
-    else if (action === "resume") this.sql.exec("UPDATE products SET status='ACTIVE',reason=NULL,terminal_count=0,error_count=0,next_poll_at=?,terminated_at=NULL,updated_at=? WHERE id=?", now, now, id);
+    if (action === "pause") this.sql.exec("UPDATE products SET status='PAUSED',reason='MANUAL_PAUSE',auto_resume_at=NULL,final_window_until=NULL,updated_at=? WHERE id=?", now, id);
+    else if (action === "resume") this.sql.exec("UPDATE products SET status='ACTIVE',reason=NULL,terminal_count=0,error_count=0,next_poll_at=?,auto_resume_at=NULL,final_window_until=NULL,terminated_at=NULL,updated_at=? WHERE id=?", now, now, id);
+    else if (action === "final_two_hours") this.sql.exec("UPDATE products SET status='ACTIVE',reason=NULL,terminal_count=0,error_count=0,next_poll_at=?,auto_resume_at=NULL,final_window_until=?,terminated_at=NULL,updated_at=? WHERE id=?", now, now + 7_200_000, now, id);
     else if (action === "terminate") this.terminate(id, "MANUAL_UNSUBSCRIBE");
     else throw new Error("不支援的操作");
     await this.scheduleNextAlarm();
@@ -192,13 +204,15 @@ export class CuthooCoordinator extends DurableObject<Env> {
       const changeCount = product.change_count + (changed ? 1 : 0);
       const changedUnitsTotal = product.changed_units_total + Math.abs(inventoryDelta);
       const stableCount = changed ? 0 : product.stable_count + 1;
-      const delay = nextPollDelaySeconds(now);
+      const nextPollAt = product.final_window_until
+        ? Math.min(now + 120_000, product.final_window_until)
+        : now + nextPollDelaySeconds(now) * 1000;
       this.sql.exec(`UPDATE products SET inventory=?,estimated_units=?,inferred_order_count=?,inferred_ordered_units=?,
         change_count=?,changed_units_total=?,stable_count=?,terminal_count=?,error_count=0,status='ACTIVE',reason=NULL,next_poll_at=?,last_success_at=?,updated_at=? WHERE id=?`,
         snapshot.inventory, Math.max(0, -snapshot.inventory), orderCount, orderedTotal, changeCount, changedUnitsTotal, stableCount, terminalCount,
-        now + delay * 1000, now, now, product.id,
+        nextPollAt, now, now, product.id,
       );
-      this.insertPollLog(product.id, "SUCCESS", product.inventory, snapshot.inventory, inventoryDelta, snapshot.soldOut, snapshot.saleEnded, null, now, now + delay * 1000);
+      this.insertPollLog(product.id, "SUCCESS", product.inventory, snapshot.inventory, inventoryDelta, snapshot.soldOut, snapshot.saleEnded, null, now, nextPollAt);
       if (changed) this.createEvent(product, snapshot.inventory, inventoryDelta, orderedUnits, adjustmentUnits, changeCount, changedUnitsTotal, now);
     } catch (error) {
       this.handlePollError(product, error);
@@ -227,6 +241,12 @@ export class CuthooCoordinator extends DurableObject<Env> {
     const now = Date.now();
     const reason = error instanceof MonitorError ? error.reason as StopReason : "NETWORK_ERROR";
     const count = product.error_count + 1;
+    if (product.final_window_until && product.final_window_until > now) {
+      const nextPollAt = Math.min(now + 120_000, product.final_window_until);
+      this.sql.exec("UPDATE products SET status='ACTIVE',reason=?,error_count=?,next_poll_at=?,auto_resume_at=NULL,updated_at=? WHERE id=?", reason, count, nextPollAt, now, product.id);
+      this.insertPollLog(product.id, "ERROR", product.inventory, null, null, null, null, reason, now, nextPollAt);
+      return;
+    }
     if (reason === "ACCESS_DENIED") {
       this.sql.exec("UPDATE products SET status='PAUSED',reason=?,auto_resume_at=NULL,error_count=?,updated_at=? WHERE id=?", reason, count, now, product.id);
       this.insertPollLog(product.id, "ERROR", product.inventory, null, null, null, null, reason, now, null);
@@ -262,7 +282,7 @@ export class CuthooCoordinator extends DurableObject<Env> {
 
   private terminate(id: string, reason: StopReason): void {
     const now = Date.now();
-    this.sql.exec("UPDATE products SET status='TERMINATED',reason=?,auto_resume_at=NULL,terminated_at=?,updated_at=? WHERE id=?", reason, now, now, id);
+    this.sql.exec("UPDATE products SET status='TERMINATED',reason=?,auto_resume_at=NULL,final_window_until=NULL,terminated_at=?,updated_at=? WHERE id=?", reason, now, now, id);
   }
 
   private async queueSystemNotice(productId: string, content: string): Promise<void> {
@@ -293,6 +313,7 @@ export class CuthooCoordinator extends DurableObject<Env> {
     const row = [...this.sql.exec<{ due: number | null }>(`SELECT MIN(due) AS due FROM (
       SELECT next_poll_at AS due FROM products WHERE status='ACTIVE'
       UNION ALL SELECT auto_resume_at AS due FROM products WHERE status='PAUSED' AND auto_resume_at IS NOT NULL
+      UNION ALL SELECT final_window_until AS due FROM products WHERE status='ACTIVE' AND final_window_until IS NOT NULL
     )`)][0];
     if (row?.due) await this.ctx.storage.setAlarm(Math.max(Date.now() + 1_000, row.due));
     else await this.ctx.storage.deleteAlarm();

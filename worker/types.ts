@@ -1,7 +1,8 @@
 export type ProductStatus = "ACTIVE" | "PAUSED" | "TERMINATED";
 export type StopReason =
   | "MANUAL_PAUSE" | "MANUAL_UNSUBSCRIBE" | "PRODUCT_REMOVED" | "OUT_OF_STOCK" | "SALE_ENDED"
-  | "SHOP_DISABLED" | "RATE_LIMITED" | "ACCESS_DENIED" | "PARSE_ERROR" | "NETWORK_ERROR";
+  | "SHOP_DISABLED" | "RATE_LIMITED" | "ACCESS_DENIED" | "PARSE_ERROR" | "NETWORK_ERROR"
+  | "FINAL_WINDOW_ENDED";
 
 export interface ProductSnapshot {
   title: string;
