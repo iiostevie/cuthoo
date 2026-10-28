@@ -30,6 +30,10 @@ export class CuthooCoordinator extends DurableObject<Env> {
         const id = decodeURIComponent(url.pathname.split("/")[3]);
         return Response.json(await this.productAction(id, await request.json()));
       }
+      if (request.method === "GET" && /^\/api\/products\/[^/]+\/logs$/.test(url.pathname)) {
+        const id = decodeURIComponent(url.pathname.split("/")[3]);
+        return Response.json(this.listChangeLogs(id));
+      }
       if (request.method === "GET" && url.pathname === "/api/logs") return Response.json(this.listPollLogs(url.searchParams.get("product") || ""));
       if (request.method === "POST" && url.pathname === "/discord/command") return Response.json(await this.discordCommand(await request.json()));
       return new Response("Not found", { status: 404 });
@@ -113,6 +117,15 @@ export class CuthooCoordinator extends DurableObject<Env> {
   private listPollLogs(productId: string): unknown[] {
     return [...this.sql.exec(
       "SELECT * FROM poll_logs WHERE product_id=? ORDER BY observed_at DESC LIMIT 200",
+      productId,
+    )];
+  }
+
+  private listChangeLogs(productId: string): unknown[] {
+    return [...this.sql.exec(
+      `SELECT observed_at, event_type AS outcome, previous_inventory, current_inventory,
+        inventory_delta, NULL AS sold_out, NULL AS reason, NULL AS next_poll_at
+        FROM order_events WHERE product_id=? ORDER BY observed_at DESC LIMIT 200`,
       productId,
     )];
   }
